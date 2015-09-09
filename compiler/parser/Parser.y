@@ -689,31 +689,60 @@ qcname  :: { Located RdrName }  -- Variable or type constructor
 importdecls :: { ([AddAnn],[LImportDecl RdrName]) }
         : importdecls ';' importdecl
                                 {% if null (snd $1)
-                                     then return (mj AnnSemi $2:fst $1,$3 : snd $1)
+                                     then return (mj AnnSemi $2:fst $1,$3 ++ snd $1)
                                      else do
                                       { addAnnotation (gl $ head $ snd $1)
                                                       AnnSemi (gl $2)
-                                      ; return (fst $1,$3 : snd $1) } }
+                                      ; return (fst $1,$3 ++ snd $1) } }
         | importdecls ';'       {% if null (snd $1)
                                      then return ((mj AnnSemi $2:fst $1),snd $1)
                                      else do
                                        { addAnnotation (gl $ head $ snd $1)
                                                        AnnSemi (gl $2)
                                        ; return $1} }
-        | importdecl             { ([],[$1]) }
+        | importdecl             { ([],$1) }
         | {- empty -}            { ([],[]) }
 
-importdecl :: { LImportDecl RdrName }
-        : 'import' maybe_src maybe_safe optqualified maybe_pkg modid maybeas maybeimpspec
-                {% ams (L (comb4 $1 $6 (snd $7) $8) $
-                  ImportDecl { ideclSourceSrc = snd $ fst $2
-                             , ideclName = $6, ideclPkgQual = snd $5
-                             , ideclSource = snd $2, ideclSafe = snd $3
-                             , ideclQualified = snd $4, ideclImplicit = False
-                             , ideclAs = unLoc (snd $7)
-                             , ideclHiding = unLoc $8 })
-                   ((mj AnnImport $1 : (fst $ fst $2) ++ fst $3 ++ fst $4
-                                    ++ fst $5 ++ fst $7)) }
+importdecl :: { [LImportDecl RdrName] }
+        : 'import' maybe_src maybe_safe optqualified maybe_pkg modid impspec
+               {% let aux isQual importList =
+                        ams (L (comb4 $1 $6 (snd (snd (snd $7))) (fst (snd $7))) $
+                        ImportDecl { ideclSourceSrc = snd $ fst $2
+                                   , ideclName = $6, ideclPkgQual = snd $5
+                                   , ideclSource = snd $2, ideclSafe = snd $3
+                                   , ideclQualified = isQual
+                                   , ideclImplicit = False
+                                   , ideclAs = unLoc (snd (snd (snd $7)))
+                                   , ideclHiding = importList })
+                         (mj AnnImport $1 : (fst $ fst $2) ++ fst $3 ++ fst $4
+                                          ++ fst $5 ++ fst (snd (snd $7)))
+                  in case $7 of
+                       (True, (importList, _)) ->
+                         if snd $4
+                         then parseErrorSDoc (getLoc $1) $
+                              text "parse error"<> colon <+> 
+                              text "'qualified' keyword used with" <+>
+                              text "ShortImports-style import statement."
+                         else do siEnabled <- liftM ((Opt_ShortImports `xopt`)
+                                                     . dflags)
+                                                    getPState
+                                 unless siEnabled . parseErrorSDoc (getLoc $1) $
+                                   text "ShortImports syntax needs"<+>
+                                   text "ShortImports turned on."
+                                 sequence [ aux False (unLoc importList)
+                                          , aux True Nothing ]
+                       (False, (importList, _)) ->
+                         fmap pure (aux (snd $4) (unLoc importList)) }
+
+-- An import specification (impspec) can be a ShortImports-style
+-- one-line import with both explicitly unqualified imports and a name used
+-- for qualification, or an old-style import.
+impspec :: { (Bool, ( Located (Maybe (Bool, Located [LIE RdrName]))
+                    , ([AddAnn],Located (Maybe ModuleName))) ) }
+        : implist asName            { ( True, (L (gl $1) (Just (False, $1))
+                                      , fmap (fmap Just) $2 )) }
+        | asName maybeimplist       { (False, ($2, fmap (fmap Just) $1)) }
+        | maybeimplist              { (False, ($1, ([], noLoc Nothing))) }
 
 maybe_src :: { (([AddAnn],Maybe SourceText),IsBootInterface) }
         : '{-# SOURCE' '#-}'        { (([mo $1,mc $2],Just (getSOURCE_PRAGs $1))
@@ -738,25 +767,22 @@ optqualified :: { ([AddAnn],Bool) }
         : 'qualified'                           { ([mj AnnQualified $1],True)  }
         | {- empty -}                           { ([],False) }
 
-maybeas :: { ([AddAnn],Located (Maybe ModuleName)) }
+asName :: { ([AddAnn],Located ModuleName) }
         : 'as' modid                           { ([mj AnnAs $1,mj AnnVal $2]
-                                                 ,sLL $1 $> (Just (unLoc $2))) }
-        | {- empty -}                          { ([],noLoc Nothing) }
+                                                 ,sLL $1 $> (unLoc $2)) }
 
-maybeimpspec :: { Located (Maybe (Bool, Located [LIE RdrName])) }
-        : impspec                  {% let (b, ie) = unLoc $1 in
-                                       checkImportSpec ie
-                                        >>= \checkedIe ->
-                                          return (L (gl $1) (Just (b, checkedIe)))  }
+maybeimplist :: { Located (Maybe (Bool, Located [LIE RdrName])) }
+        : implistHiding            { L (gl $1) (Just (unLoc $1)) }
         | {- empty -}              { noLoc Nothing }
 
-impspec :: { Located (Bool, Located [LIE RdrName]) }
-        :  '(' exportlist ')'               {% ams (sLL $1 $> (False,
-                                                      sLL $1 $> $ fromOL $2))
+implistHiding :: { Located (Bool, Located [LIE RdrName]) }
+        : 'hiding' implist         {% ams (L (gl $2) (True, $2))
+                                     [mj AnnHiding $1] }
+        | implist                  { L (gl $1) (False, $1) }
+
+implist :: { Located [LIE RdrName] }
+        :  '(' exportlist ')'               {% ams (sLL $1 $> $ fromOL $2)
                                                    [mop $1,mcp $3] }
-        |  'hiding' '(' exportlist ')'      {% ams (sLL $1 $> (True,
-                                                      sLL $1 $> $ fromOL $3))
-                                               [mj AnnHiding $1,mop $2,mcp $4] }
 
 -----------------------------------------------------------------------------
 -- Fixity Declarations

@@ -656,6 +656,7 @@ data ExtensionFlag
    | Opt_Strict
    | Opt_StrictData
    | Opt_MonadFailDesugaring
+   | Opt_ShortImports
    deriving (Eq, Enum, Show)
 
 type SigOf = Map ModuleName Module
@@ -3248,7 +3249,8 @@ xFlags = [
   flagSpec "UndecidableInstances"             Opt_UndecidableInstances,
   flagSpec "UnicodeSyntax"                    Opt_UnicodeSyntax,
   flagSpec "UnliftedFFITypes"                 Opt_UnliftedFFITypes,
-  flagSpec "ViewPatterns"                     Opt_ViewPatterns
+  flagSpec "ViewPatterns"                     Opt_ViewPatterns,
+  flagSpec "ShortImports"                     Opt_ShortImports
   ]
 
 defaultFlags :: Settings -> [GeneralFlag]
