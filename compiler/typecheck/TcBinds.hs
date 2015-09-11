@@ -234,6 +234,9 @@ tcLocalBinds (HsValBinds (ValBindsOut binds sigs)) thing_inside
         ; return (HsValBinds (ValBindsOut binds' sigs), thing) }
 tcLocalBinds (HsValBinds (ValBindsIn {})) _ = panic "tcLocalBinds"
 
+tcLocalBinds (HsLocalImportBinds _aliases binds _scope) thing_inside
+  = tcLocalBinds binds thing_inside
+
 tcLocalBinds (HsIPBinds (IPBinds ip_binds _)) thing_inside
   = do  { (given_ips, ip_binds') <-
             mapAndUnzipM (wrapLocSndM (tc_ip_bind ipClass)) ip_binds

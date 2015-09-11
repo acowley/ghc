@@ -16,7 +16,8 @@ module RnBinds (
    rnTopBindsLHS, rnTopBindsRHS, rnValBindsRHS,
 
    -- Renaming local bindings
-   rnLocalBindsAndThen, rnLocalValBindsLHS, rnLocalValBindsRHS,
+   rnLocalBindsAndThen, rnLocalValBindsLHS, rnLocalValBindsRHS, rnLocalImports,
+   rnWithLocalImportEnv, LocalImportsScope(..),
 
    -- Other bindings
    rnMethodBinds, renameSigs, mkSigTvFn,
@@ -39,7 +40,9 @@ import Module
 import Name
 import NameEnv
 import NameSet
-import RdrName          ( RdrName, rdrNameOcc )
+import RdrName          ( RdrName, rdrNameOcc, ImportSpec(is_decl),
+                          ImpDeclSpec(..), GlobalRdrElt(gre_imp),
+                          GlobalRdrEnv )
 import SrcLoc
 import ListSetOps       ( findDupsEq )
 import BasicTypes       ( RecFlag(..) )
@@ -48,7 +51,7 @@ import Bag
 import Util
 import Outputable
 import FastString
-import Data.List        ( partition, sort )
+import Data.List        ( foldl', partition, sort )
 import Maybes           ( orElse )
 import Control.Monad
 #if __GLASGOW_HASKELL__ < 709
@@ -196,6 +199,70 @@ rnTopBindsBoot b = pprPanic "rnTopBindsBoot" (ppr b)
 *********************************************************
 -}
 
+-- | Takes a set of short import alias overrides, a continuation
+-- expecting a function, a function suitable for the continuation, and
+-- local import scoping information. The global reader environment is
+-- modified with the local import qualification updates, then the
+-- continuation is called either with the function, or with the
+-- supplied function wrapped in the /original/ global reader environment
+-- depending upon the 'LocalImportsScope' value.
+rnWithLocalImportEnv :: [(OccName, [OccName])]
+                     -> ((a -> b -> RnM r) -> RnM s)
+                     -> (a -> b -> RnM r)
+                     -> LocalImportsScope
+                     -> RnM s
+rnWithLocalImportEnv aliases m k liScope = do
+  gbl <- getGblEnv
+  let gbl' = gbl { tcg_rdr_env = goHide $ mapOccEnv (map goUnqualify)
+                                                    (tcg_rdr_env gbl) }
+      k' = if liScope == LocalImportsWhere then (setGblEnv gbl .) . k else k
+  setGblEnv gbl' (m k')
+  where goUnqualify :: GlobalRdrElt -> GlobalRdrElt
+        goUnqualify gre = gre { gre_imp = map aliasUnqual (gre_imp gre) }
+        goQualify n gre = gre { gre_imp = map (aliasQualify n) (gre_imp gre) }
+
+        goHide :: GlobalRdrEnv -> GlobalRdrEnv
+        goHide env = foldl' (flip qualifyName) env (concatMap snd aliases)
+        qualifyName n = flip (alterOccEnv (fmap (map (goQualify n)))) n
+
+        onFirst f (x,y) = (f x, y)
+        aliasModuleNames = map (onFirst (mkModuleNameFS . occNameFS)) aliases
+        unqualModuleNames = map fst $ filter (null . snd) aliasModuleNames
+        qualModules = filter (not . null . snd) aliasModuleNames
+
+        aliasQualify name spec =
+          let decl = is_decl spec
+              decl' = decl { is_qual = True }
+          in if not (is_qual decl)
+             then case lookup (is_as decl) qualModules of
+                    Just hideUs
+                      | name `elem` hideUs -> spec { is_decl = decl' }
+                    _ -> spec
+             else spec
+
+        aliasUnqual spec =
+          let decl = is_decl spec
+              decl' = decl { is_qual = False }
+          in if is_qual decl && elem (is_as decl) unqualModuleNames
+             then spec { is_decl = decl' }
+             else spec
+
+
+-- Local imports change the qualification status of imports within a
+-- set of bindings, and possibly a nested scope (as with a @let@
+-- expression).
+rnLocalImports :: [(OccName, [OccName])]
+               -> HsLocalBinds RdrName
+               -> LocalImportsScope
+               -> (HsLocalBinds Name -> FreeVars -> RnM (result, FreeVars))
+               -> RnM (result, FreeVars)
+rnLocalImports aliases val_binds liScope thing_inside =
+  rnWithLocalImportEnv aliases
+                       (rnLocalBindsAndThen val_binds)
+                       (thing_inside . aux)
+                       liScope
+  where aux binds' = HsLocalImportBinds aliases binds' liScope
+
 rnLocalBindsAndThen :: HsLocalBinds RdrName
                     -> (HsLocalBinds Name -> FreeVars -> RnM (result, FreeVars))
                     -> RnM (result, FreeVars)
@@ -208,6 +275,9 @@ rnLocalBindsAndThen EmptyLocalBinds thing_inside =
 rnLocalBindsAndThen (HsValBinds val_binds) thing_inside
   = rnLocalValBindsAndThen val_binds $ \ val_binds' ->
       thing_inside (HsValBinds val_binds')
+
+rnLocalBindsAndThen (HsLocalImportBinds aliases val_binds liScope) thing_inside
+  = rnLocalImports aliases val_binds liScope thing_inside
 
 rnLocalBindsAndThen (HsIPBinds binds) thing_inside = do
     (binds',fv_binds) <- rnIPBinds binds

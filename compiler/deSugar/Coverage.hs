@@ -739,6 +739,8 @@ addTickHsLocalBinds :: HsLocalBinds Id -> TM (HsLocalBinds Id)
 addTickHsLocalBinds (HsValBinds binds) =
         liftM HsValBinds
                 (addTickHsValBinds binds)
+addTickHsLocalBinds (HsLocalImportBinds _ binds _) =
+        addTickHsLocalBinds binds
 addTickHsLocalBinds (HsIPBinds binds)  =
         liftM HsIPBinds
                 (addTickHsIPBinds binds)

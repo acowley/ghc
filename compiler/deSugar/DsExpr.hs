@@ -77,6 +77,7 @@ import GHC.Fingerprint
 dsLocalBinds :: HsLocalBinds Id -> CoreExpr -> DsM CoreExpr
 dsLocalBinds EmptyLocalBinds    body = return body
 dsLocalBinds (HsValBinds binds) body = dsValBinds binds body
+dsLocalBinds (HsLocalImportBinds _ binds _) body = dsLocalBinds binds body
 dsLocalBinds (HsIPBinds binds)  body = dsIPBinds  binds body
 
 -------------------------

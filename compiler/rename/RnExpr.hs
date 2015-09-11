@@ -20,7 +20,8 @@ module RnExpr (
 #include "HsVersions.h"
 
 import RnBinds   ( rnLocalBindsAndThen, rnLocalValBindsLHS, rnLocalValBindsRHS,
-                   rnMatchGroup, rnGRHS, makeMiniFixityEnv)
+                   rnMatchGroup, rnGRHS, makeMiniFixityEnv,
+                   rnWithLocalImportEnv )
 import HsSyn
 import TcRnMonad
 import Module           ( getModule )
@@ -1045,6 +1046,15 @@ rn_rec_stmt_lhs fix_env (L loc (LetStmt (L l(HsValBinds binds))))
                  emptyFVs
                  )]
 
+rn_rec_stmt_lhs fix_env
+  (L loc (LetStmt (L loc' imports@(HsLocalImportBinds _ _ _))))
+    = rnWithLocalImportEnv
+        aliases
+        (const $ rn_rec_stmt_lhs fix_env (L loc (LetStmt (L loc' binds))))
+        (\ _ _ -> return ())
+        liScope
+  where HsLocalImportBinds aliases binds liScope = imports
+
 -- XXX Do we need to do something with the return and mfix names?
 rn_rec_stmt_lhs fix_env (L _ (RecStmt { recS_stmts = stmts }))  -- Flatten Rec inside Rec
     = rn_rec_stmts_lhs fix_env stmts
@@ -1119,6 +1129,18 @@ rn_rec_stmt _ all_bndrs (L loc (LetStmt (L l (HsValBinds binds'))), _)
        ; let fvs = allUses du_binds
        ; return [(duDefs du_binds, fvs, emptyNameSet,
                  L loc (LetStmt (L l (HsValBinds binds'))))] }
+
+rn_rec_stmt rnBody
+            all_bndrs
+            ( L loc
+                (LetStmt (L loc' (HsLocalImportBinds aliases binds' liScope)))
+            , fvs)
+  = rnWithLocalImportEnv
+      aliases
+      (const $
+       rn_rec_stmt rnBody all_bndrs (L loc (LetStmt (L loc' binds')), fvs))
+      (\_ _ -> return ())
+      liScope
 
 -- no RecStmt case because they get flattened above when doing the LHSes
 rn_rec_stmt _ _ stmt@(L _ (RecStmt {}), _)

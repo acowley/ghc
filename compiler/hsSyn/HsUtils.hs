@@ -698,6 +698,7 @@ So these functions should not be applied to (HsSyn RdrName)
 collectLocalBinders :: HsLocalBindsLR idL idR -> [idL]
 collectLocalBinders (HsValBinds binds) = collectHsIdBinders binds
                                          -- No pattern synonyms here
+collectLocalBinders (HsLocalImportBinds _ binds _) = collectLocalBinders binds
 collectLocalBinders (HsIPBinds _)      = []
 collectLocalBinders EmptyLocalBinds    = []
 
@@ -1002,6 +1003,7 @@ lStmtsImplicits = hs_lstmts
     hs_stmt (RecStmt { recS_stmts = ss })     = hs_lstmts ss
 
     hs_local_binds (HsValBinds val_binds) = hsValBindsImplicits val_binds
+    hs_local_binds (HsLocalImportBinds _ binds _) = hs_local_binds binds
     hs_local_binds (HsIPBinds _)         = emptyNameSet
     hs_local_binds EmptyLocalBinds       = emptyNameSet
 

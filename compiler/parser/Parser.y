@@ -51,7 +51,8 @@ import Outputable
 
 -- compiler/basicTypes
 import RdrName
-import OccName          ( varName, dataName, tcClsName, tvName, startsWithUnderscore )
+import OccName          ( OccName, varName, dataName, tcClsName, tvName,
+                          startsWithUnderscore )
 import DataCon          ( DataCon, dataConName )
 import SrcLoc
 import Module
@@ -1378,8 +1379,20 @@ wherebinds :: { Located ([AddAnn],Located (HsLocalBinds RdrName)) }
                                                 -- No type declarations
         : 'where' binds                 { sLL $1 $> (mj AnnWhere $1 : (fst $ unLoc $2)
                                              ,snd $ unLoc $2) }
+        | 'where' vocurly 'import' aliases ';' decls close
+            {% do { liEnabled <- liftM ( (Opt_LocalImports `xopt`) . dflags )
+                                       getPState;
+                    unless liEnabled $
+                      parseErrorSDoc (getLoc $1)
+                                     (text "LocalImports syntax needs"
+                                      <+> text "LocalImports turned on.");
+                    val_binds <- cvBindGroup (snd $ unLoc $6);
+                    ams (sLL $1 $6
+                         ([], sL1 $3 $ HsLocalImportBinds (reverse $4)
+                                                 (HsValBinds val_binds)
+                                                 LocalImportsWhere))
+                        [mj AnnWhere $1] } }
         | {- empty -}                   { noLoc ([],noLoc emptyLocalBinds) }
-
 
 -----------------------------------------------------------------------------
 -- Transformation Rules
@@ -2198,12 +2211,45 @@ infixexp :: { LHsExpr RdrName }
                                          [mj AnnVal $2] }
                  -- AnnVal annotation for NPlusKPat, which discards the operator
 
+-- Parses a reversed list of (CONID, HiddenNames) pairs. The CONID is
+-- the "as" name given to a previously-imported module, and the list of
+-- hidden names is used to remove those unqualified names from the
+-- environment. If the list is empty, all names from themodule are seen
+-- as imported without qualification.
+aliases :: { [(OccName, [OccName])] }
+        : aliasHiding                { [$1] }
+        | aliases ',' aliasHiding    { $3 : $1 }
+        | aliases ';' 'import' aliases { $4 ++ $1 }
+
+-- A CONID followed by an optional 'hiding' clause.
+aliasHiding :: { (OccName, [OccName]) }
+        : CONID
+            { (rdrNameOcc $ mkUnqual varName (getCONID $1), []) }
+        | CONID 'hiding' '(' sig_vars ')'
+            { ( rdrNameOcc (mkUnqual varName (getCONID $1))
+              , map (rdrNameOcc . unLoc) . reverse $ unLoc $4 ) }
 
 exp10 :: { LHsExpr RdrName }
         : '\\' apat apats opt_asig '->' exp
                    {% ams (sLL $1 $> $ HsLam (mkMatchGroup FromSource
                             [sLL $1 $> $ Match NonFunBindMatch ($2:$3) (snd $4) (unguardedGRHSs $6)]))
                           (mj AnnLam $1:mu AnnRarrow $5:(fst $4)) }
+
+        | 'let' vocurly 'import' aliases decls close 'in' exp
+             {% do { liEnabled <- liftM ( (Opt_LocalImports `xopt`) . dflags )
+                                        getPState;
+                     unless liEnabled $
+                       parseErrorSDoc (getLoc $1)
+                                      (text "LocalImports syntax needs"
+                                       <+> text "LocalImports turned on.");
+                     val_binds <- fmap HsValBinds $ cvBindGroup (snd $ unLoc $5);
+                     ams (sLL $1 $> $
+                          HsLet (sL1 $3 $ HsLocalImportBinds (reverse $4)
+                                                    val_binds
+                                                    LocalImportsLet)
+                                $8)
+                         [mj AnnLet $1, mj AnnIn $7] } }
+
         | 'let' binds 'in' exp          {% ams (sLL $1 $> $ HsLet (snd $ unLoc $2) $4)
                                                (mj AnnLet $1:mj AnnIn $3
                                                  :(fst $ unLoc $2)) }
@@ -2256,6 +2302,43 @@ exp10 :: { LHsExpr RdrName }
                                               ,mc $3] }
                                           -- hdaume: core annotation
         | fexp                         { $1 }
+
+        -- parsing error messages go below here
+        | '\\' apat apats opt_asig '->' error        {% parseErrorSDoc (combineLocs $1 $5) $ text
+                                                        "parse error in lambda: no expression after '->'"
+                                                     }
+        | '\\' error                                 {% parseErrorSDoc (getLoc $1) $ text
+                                                        "parse error: naked lambda expression '\'"
+                                                     }
+
+        | 'let' 'import' aliases 'in' error  {% parseErrorSDoc (getLoc $1) $ text "parse error in local import: missing expression after 'in'" }
+
+        | 'let' 'import' error  {% parseErrorSDoc (getLoc $1) $ text "parse error in local import: missing required 'in'" }
+
+        | 'let' binds 'in' error                     {% parseErrorSDoc (combineLocs $1 $2) $ text
+                                                        "parse error in let binding: missing expression after 'in'"
+                                                     }
+        | 'let' binds error                          {% parseErrorSDoc (combineLocs $1 $2) $ text
+                                                        "parse error in let binding: missing required 'in'"
+                                                     }
+        | 'let' error                                {% parseErrorSDoc (getLoc $1) $ text
+                                                        "parse error: naked let binding"
+                                                     }
+        | 'if' exp optSemi 'then' exp optSemi
+          'else' error                               {% hintIf (combineLocs $1 $5) "else clause empty" }
+        | 'if' exp optSemi 'then' exp optSemi error  {% hintIf (combineLocs $1 $5) "missing required else clause" }
+        | 'if' exp optSemi 'then' error              {% hintIf (combineLocs $1 $2) "then clause empty" }
+        | 'if' exp optSemi error                     {% hintIf (combineLocs $1 $2) "missing required then and else clauses" }
+        | 'if' error                                 {% hintIf (getLoc $1) "naked if statement" }
+        | 'case' exp 'of' error                      {% parseErrorSDoc (combineLocs $1 $2) $ text
+                                                        "parse error in case statement: missing list after '->'"
+                                                     }
+        | 'case' exp error                           {% parseErrorSDoc (combineLocs $1 $2) $ text
+                                                        "parse error in case statement: missing required 'of'"
+                                                     }
+        | 'case' error                               {% parseErrorSDoc (getLoc $1) $ text
+                                                        "parse error: naked case statement"
+                                                     }
 
 optSemi :: { ([Located a],Bool) }
         : ';'         { ([$1],True) }

@@ -348,3 +348,6 @@ test('T9997', normal, compile, [''])
 test('T10233', extra_clean(['T01233a.hi', 'T01233a.o']),
      multimod_compile, ['T10233', '-v0'])
 test('T10478', normal, compile, [''])
+
+test('LocalImports', extra_clean(['LocalImports_A.hi', 'LocalImports_A.o', 'LocalImports_B.hi', 'LocalImports_B.o']),
+     multimod_compile, ['LocalImports', '-v0'])

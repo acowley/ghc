@@ -355,6 +355,9 @@ zonkLocalBinds env (HsValBinds vb@(ValBindsOut binds sigs))
            ; (env2, bs') <- go env1 sig_warn bs
            ; return (env2, (r,b'):bs') }
 
+zonkLocalBinds env (HsLocalImportBinds _ binds _)
+  = zonkLocalBinds env binds
+
 zonkLocalBinds env (HsIPBinds (IPBinds binds dict_binds)) = do
     new_binds <- mapM (wrapLocM zonk_ip_bind) binds
     let

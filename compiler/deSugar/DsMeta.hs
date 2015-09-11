@@ -1342,6 +1342,8 @@ repBinds (HsValBinds decs)
                                 (de_loc (sort_by_loc prs))
         ; return (ss, core_list) }
 
+repBinds (HsLocalImportBinds _ binds _) = repBinds binds
+
 rep_val_binds :: HsValBinds Name -> DsM [(SrcSpan, Core TH.DecQ)]
 -- Assumes: all the binders of the binding are alrady in the meta-env
 rep_val_binds (ValBindsOut binds sigs)

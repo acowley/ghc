@@ -59,6 +59,13 @@ import Control.Applicative hiding (empty)
 Global bindings (where clauses)
 -}
 
+-- | Determine if local imports should scope over a nested expression,
+-- or just the local bindings. This is a distinction between @let@ and
+-- @where@.
+data LocalImportsScope = LocalImportsLet   -- nested scoping
+                       | LocalImportsWhere -- where-style scoping
+                         deriving (Data, Eq, Show)
+
 -- During renaming, we need bindings where the left-hand sides
 -- have been renamed but the the right-hand sides have not.
 -- the ...LR datatypes are parametrized by two id types,
@@ -75,6 +82,20 @@ data HsLocalBindsLR idL idR
          -- These are *local* (not top level) bindings
          -- The parser accepts them, however, leaving the the
          -- renamer to report them
+  | HsLocalImportBinds [(OccName, [OccName])]    -- Local import
+                                                 -- aliases and hiding
+                                                 -- information
+
+                       (HsLocalBindsLR idL idR)  -- Bindings in a
+                                                 -- scope modified by
+                                                 -- local imports
+
+                       LocalImportsScope         -- Determine if
+                                                 -- nested scope
+                                                 -- should have its
+                                                 -- environment
+                                                 -- modified by local
+                                                 -- imports.
 
   | HsIPBinds  (HsIPBinds idR)
 
@@ -360,6 +381,7 @@ Specifically,
 
 instance (OutputableBndr idL, OutputableBndr idR) => Outputable (HsLocalBindsLR idL idR) where
   ppr (HsValBinds bs) = ppr bs
+  ppr (HsLocalImportBinds aliases bs _scope) = ppr aliases <+> ppr bs
   ppr (HsIPBinds bs)  = ppr bs
   ppr EmptyLocalBinds = empty
 
@@ -418,6 +440,7 @@ emptyLocalBinds = EmptyLocalBinds
 
 isEmptyLocalBinds :: HsLocalBindsLR a b -> Bool
 isEmptyLocalBinds (HsValBinds ds) = isEmptyValBinds ds
+isEmptyLocalBinds (HsLocalImportBinds _ ds _) = isEmptyLocalBinds ds
 isEmptyLocalBinds (HsIPBinds ds)  = isEmptyIPBinds ds
 isEmptyLocalBinds EmptyLocalBinds = True
 
