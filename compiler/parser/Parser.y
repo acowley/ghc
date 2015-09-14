@@ -739,8 +739,8 @@ importdecl :: { [LImportDecl RdrName] }
 -- for qualification, or an old-style import.
 impspec :: { (Bool, ( Located (Maybe (Bool, Located [LIE RdrName]))
                     , ([AddAnn],Located (Maybe ModuleName))) ) }
-        : implist asName            { ( True, (L (gl $1) (Just (False, $1))
-                                      , fmap (fmap Just) $2 )) }
+        : implistHiding asName      { ( True
+                                      , (fmap Just $1, fmap (fmap Just) $2 ) ) }
         | asName maybeimplist       { (False, ($2, fmap (fmap Just) $1)) }
         | maybeimplist              { (False, ($1, ([], noLoc Nothing))) }
 
